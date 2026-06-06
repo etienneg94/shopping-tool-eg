@@ -59,8 +59,8 @@ FALLBACK_CASHBACK: dict[str, tuple[float, str]] = {
 
 # Default shipping per order by store (assumes common free-shipping thresholds met)
 DEFAULT_SHIPPING: dict[str, float] = {
-    "amazon": 0.0,          # Prime
-    "walmart": 0.0,         # free over $35
+    "amazon": 0.0,          # Amazon Prime
+    "walmart": 0.0,         # Walmart+
     "target": 0.0,          # free over $35
     "walgreens": 4.99,
     "cvs": 4.99,
@@ -256,7 +256,7 @@ for key, default in {
     "last_query": "",
     "co_overrides": {},       # store → (min_rate, max_rate)
     "use_max_rate": True,
-    "tax_rate": 0.0,          # percentage
+    "tax_rate": 7.02,         # Florida default
     "shipping_overrides": {}, # store → float (per order)
 }.items():
     if key not in st.session_state:
@@ -285,7 +285,7 @@ col_q, col_btn = st.columns([5, 1])
 with col_q:
     query_input = st.text_input(
         "Product search",
-        value="got2b gel",
+        value="",
         label_visibility="collapsed",
         placeholder="Search for a product…",
     )
@@ -300,7 +300,7 @@ if search_btn:
     st.session_state.last_query = query_input
     st.session_state.shipping_overrides = {}  # reset when new search
 
-if st.session_state.results is None:
+if st.session_state.results is None and query_input.strip():
     with st.spinner("Loading…"):
         r, demo = search_products(query_input, SERPAPI_KEY)
     st.session_state.results = r
