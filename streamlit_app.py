@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide",
 )
 
-# ─── API key (from Streamlit secrets or env) ─────────────────────────────────
+# ─── API key ─────────────────────────────────────────────────────────────────
 
 SERPAPI_KEY = ""
 try:
@@ -57,6 +57,43 @@ FALLBACK_CASHBACK: dict[str, tuple[float, str]] = {
     "kroger": (2.5, "BeFrugal"),
 }
 
+# Default shipping per order by store (assumes common free-shipping thresholds met)
+DEFAULT_SHIPPING: dict[str, float] = {
+    "amazon": 0.0,          # Prime
+    "walmart": 0.0,         # free over $35
+    "target": 0.0,          # free over $35
+    "walgreens": 4.99,
+    "cvs": 4.99,
+    "iherb": 2.99,
+    "dollargeneral": 4.99,
+    "costco": 0.0,          # member shipping
+    "samsclub": 5.99,
+    "ulta": 6.95,
+    "vitaminshoppe": 5.95,
+    "kroger": 3.99,
+    "riteaid": 5.99,
+}
+
+# US state sales tax rates (approximate combined state+avg local)
+STATE_TAX_RATES: dict[str, float] = {
+    "No tax (OR/MT/NH/DE/AK)": 0.0,
+    "CA — 8.68%": 8.68,
+    "NY — 8.52%": 8.52,
+    "TX — 8.19%": 8.19,
+    "FL — 7.02%": 7.02,
+    "IL — 8.73%": 8.73,
+    "WA — 10.1%": 10.1,
+    "PA — 6.0%": 6.0,
+    "OH — 7.24%": 7.24,
+    "GA — 7.35%": 7.35,
+    "NC — 6.98%": 6.98,
+    "AZ — 8.4%": 8.4,
+    "NJ — 6.63%": 6.63,
+    "VA — 5.73%": 5.73,
+    "CO — 7.65%": 7.65,
+    "MI — 6.0%": 6.0,
+}
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def normalize_store(name: str) -> str:
@@ -93,11 +130,28 @@ def parse_unit_count(title: str) -> int:
                 return n
     return 1
 
+
+def default_shipping_for(store: str) -> float:
+    return DEFAULT_SHIPPING.get(normalize_store(store), 4.99)
+
+
+def effective_unit_price(
+    unit_price: float,
+    unit_count: int,
+    shipping: float,
+    tax_rate: float,
+    cashback_rate: float,
+) -> float:
+    """True cost per unit: base + tax + shipping split − cashback (on product only)."""
+    tax = unit_price * tax_rate / 100
+    ship_per_unit = shipping / max(unit_count, 1)
+    cashback_savings = unit_price * cashback_rate / 100
+    return round(unit_price + tax + ship_per_unit - cashback_savings, 2)
+
 # ─── Data fetching ───────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_cashback_rate(store: str) -> tuple[float, str]:
-    """Scrape CashbackMonitor for the best cashback rate at a store."""
     key = normalize_store(store)
     fallback = FALLBACK_CASHBACK.get(key, (0.0, ""))
     slug = get_store_slug(store)
@@ -132,7 +186,6 @@ def fetch_cashback_rate(store: str) -> tuple[float, str]:
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def search_products(query: str, api_key: str) -> tuple[list[dict], bool]:
-    """Search Google Shopping via SerpAPI. Returns (results, is_demo)."""
     if not api_key:
         return _demo_data(query), True
     try:
@@ -171,18 +224,18 @@ def search_products(query: str, api_key: str) -> tuple[list[dict], bool]:
 
 def _demo_data(query: str) -> list[dict]:
     stores = [
-        ("Amazon", 8.49, [1, 6], 0.85),
-        ("Walmart", 7.97, [1, 2], 0.88),
-        ("Target", 8.99, [1], 1.0),
-        ("Walgreens", 9.99, [1], 1.0),
-        ("CVS", 10.49, [1], 1.0),
-        ("iHerb", 7.49, [1, 3], 0.90),
-        ("Dollar General", 7.50, [1], 1.0),
-        ("Costco", 34.99, [8], 0.82),
-        ("Sam's Club", 32.99, [6], 0.84),
+        ("Amazon", 8.49, [1, 6], 0.85, "https://www.amazon.com/s?k=" + query.replace(" ", "+")),
+        ("Walmart", 7.97, [1, 2], 0.88, "https://www.walmart.com/search?q=" + query.replace(" ", "+")),
+        ("Target", 8.99, [1], 1.0, "https://www.target.com/s?searchTerm=" + query.replace(" ", "+")),
+        ("Walgreens", 9.99, [1], 1.0, "https://www.walgreens.com/search/results.jsp?Ntt=" + query.replace(" ", "+")),
+        ("CVS", 10.49, [1], 1.0, "https://www.cvs.com/search?searchTerm=" + query.replace(" ", "+")),
+        ("iHerb", 7.49, [1, 3], 0.90, "https://www.iherb.com/search?kw=" + query.replace(" ", "+")),
+        ("Dollar General", 7.50, [1], 1.0, "https://www.dollargeneral.com/search?q=" + query.replace(" ", "+")),
+        ("Costco", 34.99, [8], 0.82, "https://www.costco.com/CatalogSearch?keyword=" + query.replace(" ", "+")),
+        ("Sam's Club", 32.99, [6], 0.84, "https://www.samsclub.com/search?searchTerm=" + query.replace(" ", "+")),
     ]
     out = []
-    for store, base, packs, disc in stores:
+    for store, base, packs, disc, base_link in stores:
         for pack in packs:
             total = round(base * pack * (disc if pack > 1 else 1.0), 2)
             out.append({
@@ -191,7 +244,7 @@ def _demo_data(query: str) -> list[dict]:
                 "price": total,
                 "unit_count": pack,
                 "unit_price": round(total / pack, 2),
-                "link": "",
+                "link": base_link,
             })
     return out
 
@@ -201,8 +254,10 @@ for key, default in {
     "results": None,
     "is_demo": False,
     "last_query": "",
-    "co_overrides": {},     # store → (min_rate, max_rate)
+    "co_overrides": {},       # store → (min_rate, max_rate)
     "use_max_rate": True,
+    "tax_rate": 0.0,          # percentage
+    "shipping_overrides": {}, # store → float (per order)
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -217,7 +272,7 @@ st.markdown(
             🛒 Smart Shopping Price Tracker
         </h1>
         <p style="margin:0.3rem 0 0;color:#94a3b8;font-size:0.9rem;">
-            Compare prices with bulk savings &amp; cashback — powered by CashbackMonitor
+            Compare prices with bulk savings, shipping, tax &amp; cashback — powered by CashbackMonitor
         </p>
     </div>
     """,
@@ -243,8 +298,8 @@ if search_btn:
     st.session_state.results = r
     st.session_state.is_demo = demo
     st.session_state.last_query = query_input
+    st.session_state.shipping_overrides = {}  # reset when new search
 
-# Auto-load on first visit
 if st.session_state.results is None:
     with st.spinner("Loading…"):
         r, demo = search_products(query_input, SERPAPI_KEY)
@@ -261,11 +316,76 @@ if st.session_state.is_demo:
 
 results: list[dict] = st.session_state.results or []
 
-# ─── Capital One Shopping overrides ──────────────────────────────────────────
+# ─── Tax & Shipping settings ─────────────────────────────────────────────────
 
 if results:
     unique_stores = sorted({r["store"] for r in results})
 
+    with st.expander("🧾 Tax & Shipping Settings", expanded=False):
+        # ── Tax ──────────────────────────────────────────────────────────────
+        st.markdown("**Sales tax rate**")
+        st.caption("Applied to product price. Cashback is calculated before tax is added.")
+
+        tax_col1, tax_col2 = st.columns([2, 3])
+        with tax_col1:
+            tax_input = st.number_input(
+                "Tax rate (%)",
+                min_value=0.0, max_value=20.0,
+                value=st.session_state.tax_rate,
+                step=0.25,
+                format="%.2f",
+                key="tax_input",
+            )
+            st.session_state.tax_rate = tax_input
+
+        with tax_col2:
+            st.markdown("**Quick select by state:**")
+            preset_cols = st.columns(4)
+            state_items = list(STATE_TAX_RATES.items())
+            for i, (label, rate) in enumerate(state_items):
+                with preset_cols[i % 4]:
+                    if st.button(label, key=f"tax_{label}", use_container_width=True):
+                        st.session_state.tax_rate = rate
+                        st.rerun()
+
+        st.divider()
+
+        # ── Shipping ─────────────────────────────────────────────────────────
+        st.markdown("**Shipping cost per order** (edit inline)")
+        st.caption(
+            "Cost is split across units in a pack — bulk orders have lower shipping per unit. "
+            "Defaults reflect typical free-shipping thresholds."
+        )
+
+        ship_data = pd.DataFrame([
+            {
+                "Store": s,
+                "Shipping ($)": st.session_state.shipping_overrides.get(
+                    s, default_shipping_for(s)
+                ),
+            }
+            for s in unique_stores
+        ])
+
+        edited_ship = st.data_editor(
+            ship_data,
+            use_container_width=True,
+            num_rows="fixed",
+            column_config={
+                "Store": st.column_config.TextColumn("Store", disabled=True),
+                "Shipping ($)": st.column_config.NumberColumn(
+                    "Shipping ($)", min_value=0.0, max_value=99.99,
+                    step=0.50, format="$%.2f",
+                ),
+            },
+            hide_index=True,
+        )
+        for _, row in edited_ship.iterrows():
+            st.session_state.shipping_overrides[row["Store"]] = float(row["Shipping ($)"])
+
+# ─── Capital One Shopping overrides ──────────────────────────────────────────
+
+if results:
     with st.expander("💳 Capital One Shopping Overrides", expanded=False):
         st.caption(
             "Override per-store cashback with your personal Capital One Shopping offers. "
@@ -289,7 +409,7 @@ if results:
                 help="Leave at 0 to treat Min % as a fixed rate",
             )
         with c4:
-            st.write("")  # vertical spacer
+            st.write("")
             if st.button("Add Override", type="secondary", use_container_width=True):
                 if new_store and new_min > 0:
                     hi = new_max if new_max >= new_min else new_min
@@ -331,9 +451,18 @@ if results:
             s: fetch_cashback_rate(s) for s in unique_stores_list
         }
 
+    tax_rate = st.session_state.tax_rate
+
     rows = []
     for r in results:
         store = r["store"]
+        unit_price = r["unit_price"]
+        unit_count = r["unit_count"]
+
+        # Shipping
+        shipping = st.session_state.shipping_overrides.get(store, default_shipping_for(store))
+
+        # Cashback
         if store in st.session_state.co_overrides:
             mn, mx = st.session_state.co_overrides[store]
             cb_rate = mx if st.session_state.use_max_rate else mn
@@ -343,17 +472,22 @@ if results:
             cb_rate, portal = cashback_map.get(store, (0.0, ""))
             via = f"🟢 {portal}" if cb_rate > 0 else "—"
 
-        eff_unit = round(r["unit_price"] * (1 - cb_rate / 100), 2)
+        eff_unit = effective_unit_price(unit_price, unit_count, shipping, tax_rate, cb_rate)
+
         rows.append({
             "Store": store,
             "Product": r["title"],
-            "Total $": r["price"],
-            "Pack": r["unit_count"],
-            "$/Unit": r["unit_price"],
+            "Price": r["price"],
+            "Pack": unit_count,
+            "$/Unit": unit_price,
+            "Ship.": shipping,
             "Cashback %": cb_rate,
             "Via": via,
             "Eff. $/Unit ★": eff_unit,
-            "_link": r.get("link", ""),
+            "Link": r.get("link", "") or "",
+            # Internal fields for card rendering
+            "_tax_rate": tax_rate,
+            "_shipping": shipping,
         })
 
     df = pd.DataFrame(rows)
@@ -363,7 +497,7 @@ if results:
     with sort_col:
         sort_by = st.selectbox(
             "Sort by",
-            ["Eff. $/Unit ★", "$/Unit", "Cashback %", "Total $"],
+            ["Eff. $/Unit ★", "$/Unit", "Cashback %", "Price"],
             index=0,
         )
 
@@ -375,20 +509,33 @@ if results:
     medals = ["🥇", "🥈", "🥉"]
     top_cols = st.columns(3)
     for i, (_, row) in enumerate(df_sorted.head(3).iterrows()):
-        savings = round(row["$/Unit"] - row["Eff. $/Unit ★"], 3)
         is_best = i == 0
         bg = "#f0fdf4" if is_best else "white"
         border = "#86efac" if is_best else "#e2e8f0"
         pack_str = f"Pack of {int(row['Pack'])}" if row["Pack"] > 1 else "Single"
+        tax_amt = round(row["$/Unit"] * row["_tax_rate"] / 100, 2)
+        ship_unit = round(row["_shipping"] / max(row["Pack"], 1), 2)
+        cashback_amt = round(row["$/Unit"] * row["Cashback %"] / 100, 2)
+
+        breakdown = (
+            f'<div style="font-size:0.72rem;color:#64748b;margin-top:5px;line-height:1.6;">'
+            f'${row["$/Unit"]:.2f} base'
+            + (f' + ${tax_amt:.2f} tax' if tax_amt > 0 else '')
+            + (f' + ${ship_unit:.2f} ship' if ship_unit > 0 else '')
+            + (f' − ${cashback_amt:.2f} cashback' if cashback_amt > 0 else '')
+            + '</div>'
+        )
         cashback_html = (
-            f'<div style="font-size:0.8rem;color:#7c3aed;margin-top:4px">'
+            f'<div style="font-size:0.8rem;color:#7c3aed;margin-top:3px">'
             f'{row["Via"]} · {row["Cashback %"]:.1f}%</div>'
             if row["Cashback %"] > 0 else ""
         )
-        savings_html = (
-            f'<div style="font-size:0.8rem;color:#16a34a">saves ${savings:.2f}/unit</div>'
-            if savings > 0 else ""
+        link_html = (
+            f'<div style="margin-top:6px"><a href="{row["Link"]}" target="_blank" '
+            f'style="font-size:0.8rem;color:#3b82f6;text-decoration:none;">View product →</a></div>'
+            if row["Link"] else ""
         )
+
         with top_cols[i]:
             st.markdown(
                 f"""<div style="background:{bg};border:1px solid {border};
@@ -401,9 +548,9 @@ if results:
                     <span style="font-size:0.9rem;font-weight:400">/unit</span>
                 </div>
                 <div style="font-size:0.8rem;color:#64748b">
-                    {pack_str} &middot; ${row['Total $']:.2f} total
+                    {pack_str} &middot; ${row['Price']:.2f} total
                 </div>
-                {cashback_html}{savings_html}
+                {cashback_html}{breakdown}{link_html}
                 </div>""",
                 unsafe_allow_html=True,
             )
@@ -412,34 +559,31 @@ if results:
     st.markdown("### 📋 All Results")
 
     display_df = df_sorted[
-        ["Store", "Product", "Total $", "Pack", "$/Unit", "Cashback %", "Via", "Eff. $/Unit ★"]
+        ["Store", "Product", "Price", "Pack", "$/Unit", "Ship.", "Cashback %", "Via", "Eff. $/Unit ★", "Link"]
     ].copy()
     display_df.index = display_df.index + 1
 
     st.dataframe(
         display_df,
         use_container_width=True,
-        height=min(60 + len(display_df) * 38, 620),
+        height=min(60 + len(display_df) * 38, 640),
         column_config={
-            "Store": st.column_config.TextColumn("Store", width=120),
-            "Product": st.column_config.TextColumn("Product", width=280),
-            "Total $": st.column_config.NumberColumn("Total $", format="$%.2f", width=90),
-            "Pack": st.column_config.NumberColumn("Pack", format="%d×", width=70),
-            "$/Unit": st.column_config.NumberColumn("$/Unit", format="$%.2f", width=90),
-            "Cashback %": st.column_config.NumberColumn("Cashback %", format="%.1f%%", width=105),
-            "Via": st.column_config.TextColumn("Via", width=210),
+            "Store": st.column_config.TextColumn("Store", width=110),
+            "Product": st.column_config.TextColumn("Product", width=260),
+            "Price": st.column_config.NumberColumn("Price", format="$%.2f", width=85),
+            "Pack": st.column_config.NumberColumn("Pack", format="%d×", width=65),
+            "$/Unit": st.column_config.NumberColumn("$/Unit", format="$%.2f", width=85),
+            "Ship.": st.column_config.NumberColumn("Ship.", format="$%.2f", width=75),
+            "Cashback %": st.column_config.NumberColumn("Cashback %", format="%.1f%%", width=100),
+            "Via": st.column_config.TextColumn("Via", width=200),
             "Eff. $/Unit ★": st.column_config.NumberColumn("★ Eff. $/Unit", format="$%.2f", width=115),
+            "Link": st.column_config.LinkColumn("Link", display_text="View →", width=70),
         },
     )
 
-    # Product links
-    link_rows = df_sorted[df_sorted["_link"].str.len() > 0][["Store", "Product", "_link"]]
-    if not link_rows.empty:
-        with st.expander("🔗 Product Links"):
-            for _, row in link_rows.iterrows():
-                st.markdown(f"- [{row['Store']} — {row['Product'][:70]}]({row['_link']})")
-
+    # Legend
+    tax_note = f" + {tax_rate:.2f}% tax" if tax_rate > 0 else ""
     st.caption(
-        "🟢 CashbackMonitor rate &nbsp;·&nbsp; 💳 Capital One Shopping override &nbsp;·&nbsp; "
-        "★ Eff. $/Unit = $/Unit × (1 − Cashback%)"
+        f"🟢 CashbackMonitor rate &nbsp;·&nbsp; 💳 Capital One Shopping override &nbsp;·&nbsp; "
+        f"★ Eff. $/Unit = $/Unit{tax_note} + ship/unit − cashback on product"
     )
