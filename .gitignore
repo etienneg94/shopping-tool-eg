@@ -4,3 +4,5 @@ node_modules/
 next-env.d.ts
 tsconfig.tsbuildinfo
 .streamlit/secrets.toml
+__pycache__/
+*.pyc
