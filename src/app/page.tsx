@@ -7,10 +7,11 @@ import { formatCurrency } from '@/lib/utils';
 type SortKey = 'effectiveUnitPrice' | 'unitPrice' | 'cashbackRate' | 'price';
 
 const MEDAL = ['🥇', '🥈', '🥉'];
+const FL_TAX_RATE = 7.02; // Florida combined sales tax rate
 
 export default function Home() {
-  const [query, setQuery] = useState('got2b gel');
-  const [inputValue, setInputValue] = useState('got2b gel');
+  const [query, setQuery] = useState('');
+  const [inputValue, setInputValue] = useState('');
   const [results, setResults] = useState<ShoppingResult[]>([]);
   const [cashbackRates, setCashbackRates] = useState<Record<string, number>>({});
   const [cashbackPortals, setCashbackPortals] = useState<Record<string, string>>({});
@@ -113,14 +114,16 @@ export default function Home() {
       cashbackSource = 'none';
     }
 
-    const multiplier = 1 - cashbackRate / 100;
+    const taxFactor = 1 + FL_TAX_RATE / 100;
+    const cashbackFactor = cashbackRate / 100;
+    const effUnit = Math.round((r.unitPrice * taxFactor - r.unitPrice * cashbackFactor) * 100) / 100;
     return {
       ...r,
       cashbackRate,
       cashbackPortal,
       cashbackSource,
-      effectivePrice: Math.round(r.price * multiplier * 100) / 100,
-      effectiveUnitPrice: Math.round(r.unitPrice * multiplier * 100) / 100,
+      effectivePrice: Math.round(r.price * taxFactor * 100) / 100,
+      effectiveUnitPrice: effUnit,
     };
   });
 
@@ -310,7 +313,7 @@ export default function Home() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          {r.link !== '#' && (
+                          {r.link && r.link !== '#' && (
                             <a
                               href={r.link}
                               target="_blank"
@@ -480,7 +483,7 @@ export default function Home() {
               Bulk / multi-pack
             </div>
             <span className="ml-auto">
-              Eff. Price / Unit = (Unit Price) × (1 − Cashback%)
+              Eff. Price / Unit = Unit Price × (1 + {FL_TAX_RATE}% FL tax) − Cashback
             </span>
           </div>
         )}

@@ -6,17 +6,18 @@ import type { ShoppingResult } from '@/lib/types';
 const SERPAPI_KEY = process.env.SERPAPI_KEY ?? '';
 
 function generateDemoData(query: string): ShoppingResult[] {
-  const q = query || 'got2b gel';
-  const stores: { name: string; basePrice: number; packs: number[]; discount: number }[] = [
-    { name: 'Amazon', basePrice: 8.49, packs: [1, 6], discount: 0.85 },
-    { name: 'Walmart', basePrice: 7.97, packs: [1, 2], discount: 0.88 },
-    { name: 'Target', basePrice: 8.99, packs: [1], discount: 1 },
-    { name: 'Walgreens', basePrice: 9.99, packs: [1], discount: 1 },
-    { name: 'CVS', basePrice: 10.49, packs: [1], discount: 1 },
-    { name: 'iHerb', basePrice: 7.49, packs: [1, 3], discount: 0.90 },
-    { name: 'Dollar General', basePrice: 7.50, packs: [1], discount: 1 },
-    { name: 'Costco', basePrice: 34.99, packs: [8], discount: 0.82 },
-    { name: "Sam's Club", basePrice: 32.99, packs: [6], discount: 0.84 },
+  const q = query.trim();
+  const encoded = encodeURIComponent(q);
+  const stores: { name: string; basePrice: number; packs: number[]; discount: number; searchUrl: string }[] = [
+    { name: 'Amazon', basePrice: 8.49, packs: [1, 6], discount: 0.85, searchUrl: `https://www.amazon.com/s?k=${encoded}` },
+    { name: 'Walmart', basePrice: 7.97, packs: [1, 2], discount: 0.88, searchUrl: `https://www.walmart.com/search?q=${encoded}` },
+    { name: 'Target', basePrice: 8.99, packs: [1], discount: 1, searchUrl: `https://www.target.com/s?searchTerm=${encoded}` },
+    { name: 'Walgreens', basePrice: 9.99, packs: [1], discount: 1, searchUrl: `https://www.walgreens.com/search/results.jsp?Ntt=${encoded}` },
+    { name: 'CVS', basePrice: 10.49, packs: [1], discount: 1, searchUrl: `https://www.cvs.com/search?searchTerm=${encoded}` },
+    { name: 'iHerb', basePrice: 7.49, packs: [1, 3], discount: 0.90, searchUrl: `https://www.iherb.com/search?kw=${encoded}` },
+    { name: 'Dollar General', basePrice: 7.50, packs: [1], discount: 1, searchUrl: `https://www.dollargeneral.com/search?q=${encoded}` },
+    { name: 'Costco', basePrice: 34.99, packs: [8], discount: 0.82, searchUrl: `https://www.costco.com/CatalogSearch?keyword=${encoded}` },
+    { name: "Sam's Club", basePrice: 32.99, packs: [6], discount: 0.84, searchUrl: `https://www.samsclub.com/search?searchTerm=${encoded}` },
   ];
 
   const results: ShoppingResult[] = [];
@@ -34,7 +35,7 @@ function generateDemoData(query: string): ShoppingResult[] {
         price,
         unitCount: pack,
         unitPrice,
-        link: '#',
+        link: s.searchUrl,
         thumbnail: '',
       });
     }
@@ -70,7 +71,7 @@ export async function GET(req: NextRequest) {
           price,
           unitCount,
           unitPrice: Math.round((price / unitCount) * 100) / 100,
-          link: (item.link as string) ?? '#',
+          link: ((item.product_link as string) || (item.link as string)) ?? '',
           thumbnail: (item.thumbnail as string) ?? '',
         } satisfies ShoppingResult;
       }
