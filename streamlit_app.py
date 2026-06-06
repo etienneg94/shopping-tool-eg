@@ -208,14 +208,18 @@ def search_products(query: str, api_key: str) -> tuple[list[dict], bool]:
             if price <= 0:
                 continue
             title = item.get("title", "")
+            store = item.get("source", "Unknown")
             unit_count = parse_unit_count(title)
+            link = (item.get("link") or item.get("product_link") or "").strip()
+            if not link:
+                link = f"https://www.google.com/search?q={requests.compat.quote_plus(title)}+{requests.compat.quote_plus(store)}"
             results.append({
                 "title": title,
-                "store": item.get("source", "Unknown"),
+                "store": store,
                 "price": price,
                 "unit_count": unit_count,
                 "unit_price": round(price / max(unit_count, 1), 2),
-                "link": item.get("link", ""),
+                "link": link,
             })
         return (results, False) if results else (_demo_data(query), True)
     except Exception:
@@ -577,7 +581,7 @@ if results:
             "Cashback %": st.column_config.NumberColumn("Cashback %", format="%.1f%%", width=100),
             "Via": st.column_config.TextColumn("Via", width=200),
             "Eff. $/Unit ★": st.column_config.NumberColumn("★ Eff. $/Unit", format="$%.2f", width=115),
-            "Link": st.column_config.LinkColumn("Link", display_text="View →", width=70),
+            "Link": st.column_config.LinkColumn("Link", display_text="View", width=70),
         },
     )
 
